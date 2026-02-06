@@ -1,5 +1,7 @@
 # HXP — Human Execution Protocol
 
+![HXP Logo](./assets/hxp-logo1.svg)
+
 > *The open standard for human execution in agentic systems.*
 
 ## What is HXP?
