@@ -478,10 +478,14 @@ class HXPAsyncClient:
             payload["context"] = context
         return await self.require(action="APPROVE", payload=payload, **kwargs)
 
-    async def provide(self, prompt, input_type="text", context=None, **kwargs):
+    async def provide(self, prompt, input_type="text", context=None, placeholder=None, validation=None, **kwargs):
         payload = {"prompt": prompt, "input_type": input_type}
         if context:
             payload["context"] = context
+        if placeholder:
+            payload["placeholder"] = placeholder
+        if validation:
+            payload["validation"] = validation
         return await self.require(action="PROVIDE", payload=payload, **kwargs)
 
     async def close(self):

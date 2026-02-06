@@ -434,6 +434,7 @@
     <div class="tabs">
       <button class="tab active" onclick="switchTab('pending')">Pending</button>
       <button class="tab" onclick="switchTab('completed')">Completed</button>
+      <button class="btn btn-reject" id="clearBtn" onclick="clearCompleted()" style="margin-left: auto; padding: 8px 12px; font-size: 13px; display: none;">Clear All</button>
     </div>
 
     <!-- Request list -->
@@ -458,9 +459,14 @@
       
       fetchRequests();
       
-      // Start polling
+      // Start polling (only when on pending tab)
       if (pollInterval) clearInterval(pollInterval);
-      pollInterval = setInterval(fetchRequests, 3000);
+      pollInterval = setInterval(() => {
+        // Only poll when viewing pending requests
+        if (currentTab === 'pending') {
+          fetchRequests();
+        }
+      }, 5000); // Increased to 5 seconds to give more time for user input
       
       updateConnectionBadge(true);
     }
@@ -485,9 +491,17 @@
 
         // Merge: keep completed from local state, update pending from server
         const completedLocal = allRequests.filter(r => r.status === 'completed');
-        allRequests = [...data.requests, ...completedLocal];
+        const serverRequestIds = new Set(data.requests.map(r => r.request_id));
+        const uniqueCompleted = completedLocal.filter(r => !serverRequestIds.has(r.request_id));
+        allRequests = [...data.requests, ...uniqueCompleted];
         
-        updateUI();
+        // Don't re-render if user is actively typing in an input field
+        const activeElement = document.activeElement;
+        const isTyping = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA');
+        
+        if (!isTyping) {
+          updateUI();
+        }
         updateConnectionBadge(true);
       } catch (err) {
         console.error('Fetch error:', err);
@@ -541,6 +555,13 @@
 
       const pendingCount = allRequests.filter(r => r.status === 'pending' || r.status === 'assigned').length;
       document.getElementById('pendingCount').textContent = `${pendingCount} pending`;
+
+      // Update clear button visibility
+      const clearBtn = document.getElementById('clearBtn');
+      if (clearBtn) {
+        const hasCompleted = allRequests.some(r => r.status === 'completed');
+        clearBtn.style.display = (currentTab === 'completed' && hasCompleted) ? 'block' : 'none';
+      }
 
       if (filtered.length === 0) {
         list.innerHTML = currentTab === 'pending'
@@ -680,7 +701,27 @@
       document.querySelectorAll('.tab').forEach((t, i) => {
         t.classList.toggle('active', (i === 0 && tab === 'pending') || (i === 1 && tab === 'completed'));
       });
+      
+      // Show/hide clear button
+      const clearBtn = document.getElementById('clearBtn');
+      const hasCompleted = allRequests.some(r => r.status === 'completed');
+      clearBtn.style.display = (tab === 'completed' && hasCompleted) ? 'block' : 'none';
+      
+      // When switching to pending, fetch fresh data immediately
+      if (tab === 'pending' && serverUrl) {
+        fetchRequests();
+      } else {
+        updateUI();
+      }
+    }
+
+    // Clear completed requests
+    function clearCompleted() {
+      if (!confirm('Clear all completed requests?')) return;
+      allRequests = allRequests.filter(r => r.status !== 'completed');
       updateUI();
+      switchTab('pending');
+      showToast('Completed requests cleared');
     }
 
     // Connection badge

@@ -1,7 +1,6 @@
 # HXP — Human Execution Protocol
 
-**The open standard for human execution in agentic systems.**
-
+> *The open standard for human execution in agentic systems.*
 
 ## What is HXP?
 
@@ -28,43 +27,90 @@ HXP provides:
 - **Role-based routing** — requests go to the right human (owner, delegate, or pool)
 - **Timeout & fallback** — built-in handling when humans are unavailable
 
-## Quick Start
+## How It Works
 
-### Agent Side (Python SDK)
+HXP is built on top of standard HTTP. Agents make POST requests. Humans resolve them through any client. Agents poll or subscribe via WebSocket for the result. Every response includes an `HXP-Status` header signaling the execution state.
 
-```python
-from hxp import HXPClient
-
-client = HXPClient(server="https://your-hxp-server.com", api_key="your-key")
-
-# Agent needs a decision
-receipt = await client.require(
-    action="DECIDE",
-    question="Approve $99/mo Stripe plan for Project Alpha?",
-    options=["Approve", "Deny"],
-    role="owner",
-    context="Required for payment processing. Monthly cost within budget.",
-    timeout_seconds=86400
-)
-
-if receipt.result == "Approve":
-    await setup_stripe_plan()
-else:
-    await pause_project()
+```
+1. Agent hits a boundary it can't cross alone
+2. Agent sends POST /hxp/v1/requests with a structured execution request
+3. Server queues it, routes to the right human, returns HXP-Status: pending
+4. Human sees the request in their client (web, mobile, Slack, CLI)
+5. Human executes (taps a button, signs, provides info)
+6. Server returns HXP-Status: completed with a signed receipt
+7. Agent gets the receipt and continues autonomously
 ```
 
-### Server Side (Node.js Reference)
+The protocol uses three custom headers:
+
+| Header | Purpose |
+|--------|---------|
+| `HXP-Status` | Execution state: `pending`, `assigned`, `completed`, `expired` |
+| `HXP-Request-Id` | Unique execution request identifier (e.g. `hxp_abc123`) |
+| `Authorization` | Standard Bearer token for agents and humans |
+
+## Quick Start
+
+### 1. Start the server
 
 ```bash
-cd server
+git clone https://github.com/cruellacodes/Human-Execution-Protocol.git
+cd Human-Execution-Protocol/server
 npm install
 cp .env.example .env
 npm start
 ```
 
-### Human Client
+Server runs at `http://localhost:3402`. Verify with:
 
-Open the web client, log in, and resolve pending requests. Each request shows exactly what action is needed — no ambiguity, no guesswork.
+```bash
+curl http://localhost:3402/hxp
+```
+
+### 2. Open the human client
+
+Open `client/index.html` in a browser. Click **Connect**. This is where you'll see and execute requests from your agents.
+
+### 3. Seed sample requests
+
+```bash
+pip install httpx
+python demo.py
+```
+
+Switch to the browser — 7 sample requests appear. Tap through them to see the full flow.
+
+### 4. Use in your own agent (Python SDK)
+
+```bash
+pip install httpx websockets
+```
+
+```python
+from hxp import HXPClient
+
+client = HXPClient(server="http://localhost:3402", api_key="dev-agent-key")
+
+# Agent needs a decision — blocks until human responds
+receipt = client.decide(
+    question="Approve $99/mo Stripe plan for Project Alpha?",
+    options=["Approve", "Deny"],
+    context="Required for payment processing. Monthly cost within budget.",
+)
+
+if receipt.result == "Approve":
+    setup_stripe_plan()
+else:
+    pause_project()
+```
+
+### 5. Run the full agent example
+
+```bash
+python examples/agent_builds_saas.py
+```
+
+Watch an agent build a SaaS product end-to-end, pausing for your input only when it hits a boundary. Resolve each request in the browser as they appear.
 
 ## Core Concepts
 
