@@ -1,0 +1,539 @@
+openapi: 3.0.3
+info:
+  title: Human Execution Protocol (HXP)
+  description: |
+    An open protocol for AI agents to execute humans.
+    The open standard for human execution in agentic systems.
+    Humans are the last API.
+  version: 0.1.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  contact:
+    name: HXP Protocol
+    url: https://github.com/your-org/hxp
+
+servers:
+  - url: https://api.hxp.dev/v1
+    description: Hosted HXP service
+  - url: http://localhost:3402/v1
+    description: Local development
+
+tags:
+  - name: Agent API
+    description: Endpoints used by agents to create and monitor requests
+  - name: Human API
+    description: Endpoints used by human clients to view and resolve requests
+  - name: Admin API
+    description: Endpoints for managing delegation rules and settings
+
+paths:
+  /requests:
+    post:
+      tags: [Agent API]
+      summary: Create a human action request
+      description: |
+        Agent raises a request for human action. The server queues it,
+        routes it to the appropriate human, and returns a request ID
+        the agent can use to poll or subscribe for the receipt.
+      operationId: createRequest
+      security:
+        - AgentApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRequest'
+            examples:
+              decide:
+                summary: Decision request
+                value:
+                  action: DECIDE
+                  role: owner
+                  priority: normal
+                  timeout_seconds: 3600
+                  fallback: pause
+                  agent_id: agent_alpha_01
+                  project_id: project_alpha
+                  payload:
+                    question: "Approve $99/mo Stripe plan for Project Alpha?"
+                    options: ["Approve", "Deny"]
+                    context: "Required for payment processing. Monthly cost is within budget."
+              approve:
+                summary: Approval request
+                value:
+                  action: APPROVE
+                  role: owner
+                  priority: high
+                  timeout_seconds: 1800
+                  fallback: fail
+                  agent_id: agent_beta_02
+                  payload:
+                    item: "Deploy v2.1.0 to production"
+                    details:
+                      version: "2.1.0"
+                      changes: 14
+                      tests_passing: true
+                    context: "All CI checks green. 14 changes including auth refactor."
+              provide:
+                summary: Information request
+                value:
+                  action: PROVIDE
+                  role: owner
+                  priority: normal
+                  timeout_seconds: 86400
+                  fallback: pause
+                  agent_id: agent_gamma_03
+                  payload:
+                    prompt: "Stripe API secret key for production"
+                    input_type: text
+                    context: "Needed to configure payment processing."
+                    placeholder: "sk_live_..."
+      responses:
+        '201':
+          description: Request created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestCreated'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid API key
+
+    get:
+      tags: [Agent API]
+      summary: List requests for an agent
+      operationId: listAgentRequests
+      security:
+        - AgentApiKey: []
+      parameters:
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+        - name: project_id
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, assigned, completed, expired, failed]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: List of requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Request'
+                  total:
+                    type: integer
+
+  /requests/{request_id}:
+    get:
+      tags: [Agent API]
+      summary: Get request status and receipt
+      description: |
+        Poll for request status. When status is "completed",
+        the receipt field contains the human's response.
+      operationId: getRequest
+      security:
+        - AgentApiKey: []
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Request with current status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Request'
+        '404':
+          description: Request not found
+
+  /requests/{request_id}/cancel:
+    post:
+      tags: [Agent API]
+      summary: Cancel a pending request
+      operationId: cancelRequest
+      security:
+        - AgentApiKey: []
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Request cancelled
+        '409':
+          description: Request already resolved
+
+  /inbox:
+    get:
+      tags: [Human API]
+      summary: Get pending requests for the authenticated human
+      operationId: getInbox
+      security:
+        - HumanToken: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, assigned]
+            default: pending
+        - name: priority
+          in: query
+          schema:
+            type: string
+            enum: [low, normal, high, critical]
+        - name: action
+          in: query
+          schema:
+            type: string
+            enum: [DECIDE, APPROVE, PROVIDE]
+      responses:
+        '200':
+          description: List of pending requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Request'
+                  total:
+                    type: integer
+                  unresolved:
+                    type: integer
+
+  /requests/{request_id}/resolve:
+    post:
+      tags: [Human API]
+      summary: Resolve a request with human action
+      operationId: resolveRequest
+      security:
+        - HumanToken: []
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveRequest'
+            examples:
+              decide_approve:
+                value:
+                  result: "Approve"
+              approve_reject:
+                value:
+                  result: "rejected"
+                  reason: "Budget exceeded for this quarter"
+              provide_key:
+                value:
+                  result: "sk_live_abc123xyz"
+      responses:
+        '200':
+          description: Request resolved, receipt returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Receipt'
+        '409':
+          description: Request already resolved
+        '422':
+          description: Invalid result (doesn't match options)
+
+  /delegation/rules:
+    get:
+      tags: [Admin API]
+      summary: List delegation rules
+      security:
+        - HumanToken: []
+      responses:
+        '200':
+          description: Current delegation rules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DelegationRule'
+
+    post:
+      tags: [Admin API]
+      summary: Create a delegation rule
+      security:
+        - HumanToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DelegationRule'
+      responses:
+        '201':
+          description: Rule created
+
+components:
+  securitySchemes:
+    AgentApiKey:
+      type: http
+      scheme: bearer
+      description: API key issued to an agent or agent owner
+    HumanToken:
+      type: http
+      scheme: bearer
+      description: JWT token for authenticated human users
+
+  schemas:
+    CreateRequest:
+      type: object
+      required: [action, payload]
+      properties:
+        action:
+          type: string
+          enum: [DECIDE, APPROVE, PROVIDE]
+          description: The type of human action needed
+        role:
+          type: string
+          enum: [owner, delegate, pool]
+          default: owner
+          description: Which human role should handle this
+        priority:
+          type: string
+          enum: [low, normal, high, critical]
+          default: normal
+        timeout_seconds:
+          type: integer
+          default: 0
+          description: 0 means no timeout (wait indefinitely)
+        fallback:
+          type: string
+          enum: [pause, fail, default]
+          default: pause
+        agent_id:
+          type: string
+          description: Identifier for the requesting agent
+        project_id:
+          type: string
+          description: Optional grouping for related requests
+        metadata:
+          type: object
+          properties:
+            agent_framework:
+              type: string
+            agent_task:
+              type: string
+        payload:
+          oneOf:
+            - $ref: '#/components/schemas/DecidePayload'
+            - $ref: '#/components/schemas/ApprovePayload'
+            - $ref: '#/components/schemas/ProvidePayload'
+
+    DecidePayload:
+      type: object
+      required: [question, options]
+      properties:
+        question:
+          type: string
+          maxLength: 300
+        options:
+          type: array
+          items:
+            type: string
+          minItems: 2
+          maxItems: 6
+        context:
+          type: string
+          maxLength: 500
+        default_option:
+          type: string
+
+    ApprovePayload:
+      type: object
+      required: [item]
+      properties:
+        item:
+          type: string
+          maxLength: 300
+        details:
+          type: object
+        context:
+          type: string
+          maxLength: 500
+        reject_requires_reason:
+          type: boolean
+          default: false
+
+    ProvidePayload:
+      type: object
+      required: [prompt, input_type]
+      properties:
+        prompt:
+          type: string
+          maxLength: 300
+        input_type:
+          type: string
+          enum: [text, number, url, email, file, selection]
+        context:
+          type: string
+          maxLength: 500
+        validation:
+          type: object
+          properties:
+            pattern:
+              type: string
+            min:
+              type: number
+            max:
+              type: number
+            allowed_values:
+              type: array
+              items:
+                type: string
+        placeholder:
+          type: string
+
+    RequestCreated:
+      type: object
+      properties:
+        request_id:
+          type: string
+        status:
+          type: string
+          enum: [pending]
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        poll_url:
+          type: string
+        ws_url:
+          type: string
+
+    Request:
+      type: object
+      properties:
+        request_id:
+          type: string
+        action:
+          type: string
+        role:
+          type: string
+        priority:
+          type: string
+        status:
+          type: string
+          enum: [pending, assigned, completed, expired, failed, cancelled]
+        agent_id:
+          type: string
+        project_id:
+          type: string
+        payload:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        receipt:
+          $ref: '#/components/schemas/Receipt'
+
+    Receipt:
+      type: object
+      properties:
+        request_id:
+          type: string
+        status:
+          type: string
+          enum: [completed, expired, failed, cancelled]
+        result:
+          description: The human's response (type varies by action)
+        reason:
+          type: string
+          nullable: true
+        completed_by:
+          type: string
+        completed_at:
+          type: string
+          format: date-time
+        duration_seconds:
+          type: integer
+        evidence_hash:
+          type: string
+          description: SHA-256(request_id + result + completed_at + server_secret)
+
+    ResolveRequest:
+      type: object
+      required: [result]
+      properties:
+        result:
+          description: The human's response
+        reason:
+          type: string
+          description: Optional reason (required for some rejections)
+
+    DelegationRule:
+      type: object
+      required: [delegate_to]
+      properties:
+        action:
+          type: string
+          enum: [DECIDE, APPROVE, PROVIDE]
+        project_id:
+          type: string
+        tag:
+          type: string
+        delegate_to:
+          type: string
+          description: User ID of the delegate
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
